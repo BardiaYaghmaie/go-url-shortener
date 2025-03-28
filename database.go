@@ -9,7 +9,6 @@ import (
 
 var db *sql.DB
 
-// initDB initializes the SQLite database and creates the 'urls' table if it doesn't exist.
 func initDB(filepath string) error {
 	var err error
 	db, err = sql.Open("sqlite3", filepath)
@@ -29,13 +28,11 @@ func initDB(filepath string) error {
 	return nil
 }
 
-// insertURL inserts a new short code and long URL mapping into the database.
 func insertURL(shortCode, longURL string) error {
 	_, err := db.Exec("INSERT INTO urls (short_code, long_url) VALUES (?, ?)", shortCode, longURL)
 	return err
 }
 
-// getLongURL retrieves the long URL associated with a given short code.
 func getLongURL(shortCode string) (string, error) {
 	var longURL string
 	err := db.QueryRow("SELECT long_url FROM urls WHERE short_code = ?", shortCode).Scan(&longURL)

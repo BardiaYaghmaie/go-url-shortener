@@ -17,11 +17,12 @@ func shortenHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var longURL string
+	var longURL, customCode string
 	contentType := r.Header.Get("Content-Type")
 	if contentType == "application/json" {
 		var data struct {
-			URL string `json:"url"`
+			URL        string `json:"url"`
+			CustomCode string `json:"custom_code"`
 		}
 		err := json.NewDecoder(r.Body).Decode(&data)
 		if err != nil {
@@ -29,14 +30,15 @@ func shortenHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		longURL = data.URL
+		customCode = data.CustomCode
 	} else {
-		// Handle form data from HTMX
 		err := r.ParseForm()
 		if err != nil {
 			http.Error(w, "Invalid form data", http.StatusBadRequest)
 			return
 		}
 		longURL = r.FormValue("url")
+		customCode = r.FormValue("custom_code")
 	}
 
 	if !isValidURL(longURL) {
@@ -50,23 +52,60 @@ func shortenHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var shortCode string
-	for {
-		shortCode = generateShortCode(6)
-		err := insertURL(shortCode, longURL)
-		if err == nil {
-			break
+	if customCode != "" {
+		if !isValidShortCode(customCode) {
+			errorMsg := "Invalid short code. Must be 4-20 alphanumeric characters."
+			if r.Header.Get("HX-Request") == "true" {
+				w.Header().Set("Content-Type", "text/html")
+				fmt.Fprintf(w, `<div class="alert alert-danger" role="alert">%s</div>`, errorMsg)
+			} else {
+				http.Error(w, errorMsg, http.StatusBadRequest)
+			}
+			return
 		}
-		if sqliteErr, ok := err.(sqlite3.Error); ok && sqliteErr.Code == sqlite3.ErrConstraint {
-			continue
+
+		err := insertURL(customCode, longURL)
+		if err != nil {
+			if sqliteErr, ok := err.(sqlite3.Error); ok && sqliteErr.Code == sqlite3.ErrConstraint {
+				errorMsg := "This code is already in use."
+				if r.Header.Get("HX-Request") == "true" {
+					w.Header().Set("Content-Type", "text/html")
+					fmt.Fprintf(w, `<div class="alert alert-danger" role="alert">%s</div>`, errorMsg)
+				} else {
+					http.Error(w, errorMsg, http.StatusConflict)
+				}
+				return
+			}
+			log.Println("Database error:", err)
+			errorMsg := "Database error."
+			if r.Header.Get("HX-Request") == "true" {
+				w.Header().Set("Content-Type", "text/html")
+				fmt.Fprintf(w, `<div class="alert alert-danger" role="alert">%s</div>`, errorMsg)
+			} else {
+				http.Error(w, errorMsg, http.StatusInternalServerError)
+			}
+			return
 		}
-		log.Println("Database error:", err)
-		if r.Header.Get("HX-Request") == "true" {
-			w.Header().Set("Content-Type", "text/html")
-			fmt.Fprint(w, `<div class="alert alert-danger" role="alert">Database error</div>`)
-		} else {
-			http.Error(w, "Database error", http.StatusInternalServerError)
+		shortCode = customCode
+	} else {
+		for {
+			shortCode = generateShortCode(6)
+			err := insertURL(shortCode, longURL)
+			if err == nil {
+				break
+			}
+			if sqliteErr, ok := err.(sqlite3.Error); ok && sqliteErr.Code == sqlite3.ErrConstraint {
+				continue
+			}
+			log.Println("Database error:", err)
+			if r.Header.Get("HX-Request") == "true" {
+				w.Header().Set("Content-Type", "text/html")
+				fmt.Fprint(w, `<div class="alert alert-danger" role="alert">Database error</div>`)
+			} else {
+				http.Error(w, "Database error", http.StatusInternalServerError)
+			}
+			return
 		}
-		return
 	}
 
 	shortURL := fmt.Sprintf("http://%s/%s", r.Host, shortCode)
@@ -88,7 +127,6 @@ func redirectHandler(w http.ResponseWriter, r *http.Request) {
 
 	path := strings.TrimPrefix(r.URL.Path, "/")
 	if path == "" {
-		// Serve the HTML form
 		w.Header().Set("Content-Type", "text/html")
 		fmt.Fprint(w, `
 <!DOCTYPE html>
@@ -106,6 +144,9 @@ func redirectHandler(w http.ResponseWriter, r *http.Request) {
         <div class="input-group">
             <input type="url" name="url" class="form-control" placeholder="Enter your URL" required>
             <button type="submit" class="btn btn-primary">Shorten</button>
+        </div>
+        <div class="input-group mt-2">
+            <input type="text" name="custom_code" class="form-control" placeholder="Custom short code (optional)" pattern="[A-Za-z0-9]{4,20}" title="4 to 20 alphanumeric characters">
         </div>
     </form>
     <div id="result" class="mt-3"></div>
