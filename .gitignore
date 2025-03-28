@@ -26,3 +26,4 @@ go.work.sum
 
 # urls database
 urls.db
+data/

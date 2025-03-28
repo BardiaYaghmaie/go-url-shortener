@@ -3,10 +3,16 @@ package main
 import (
 	"log"
 	"net/http"
+	"os"
 )
 
 func main() {
-	err := initDB("urls.db")
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath == "" {
+		dbPath = "urls.db"
+	}
+	
+	err := initDB(dbPath)
 	if err != nil {
 		log.Fatal("Failed to initialize database:", err)
 	}
